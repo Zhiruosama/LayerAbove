@@ -1,5 +1,5 @@
 /**
- * LayerAboveTools - 在选中图层上方创建等长对齐的调整层/固态层，或在游标处创建单帧调整层。
+ * LayerAboveTools - 在选中图层上方创建等长对齐的调整层/固态层/空对象（可选绑定父子），或在游标处创建单帧调整层。
  * 使用：复制到 AE 的 ScriptUI Panels 目录后重启 AE，或通过「文件 > 脚本 > 运行脚本文件」运行。
  */
 (function layerAboveTools(thisObj) {
@@ -24,6 +24,17 @@
       }
     }
     return best;
+  }
+
+  /** 当前合成中所有已选图层，顺序为时间轴由上到下（索引递增） */
+  function getSelectedLayersOrdered(comp) {
+    var arr = [];
+    var i;
+    for (i = 1; i <= comp.numLayers; i++) {
+      var lyr = comp.layer(i);
+      if (lyr.selected) arr.push(lyr);
+    }
+    return arr;
   }
 
   function alignTimeAndMoveAbove(comp, newLayer, refLayer) {
@@ -94,6 +105,40 @@
         dur
       );
       alignTimeAndMoveAbove(comp, solid, ref);
+    } catch (e) {
+      alert("错误: " + e.toString());
+    } finally {
+      app.endUndoGroup();
+    }
+  }
+
+  /** 在最上层已选图层上方新建空对象，并把当前所有已选图层挂为其子层 */
+  function onAddNullAboveAndParent() {
+    var comp = getActiveComp();
+    if (!comp) {
+      alert("请先打开一个合成。");
+      return;
+    }
+    var layers = getSelectedLayersOrdered(comp);
+    if (layers.length === 0) {
+      alert("请选中至少一个图层。");
+      return;
+    }
+    var ref = getTopmostSelectedLayer(comp);
+    app.beginUndoGroup("上方空对象并绑定父子");
+    try {
+      var dur = ref.outPoint - ref.inPoint;
+      if (dur <= 0) dur = comp.frameDuration;
+      var nl = comp.layers.addNull(dur);
+      alignTimeAndMoveAbove(comp, nl, ref);
+      var j;
+      for (j = 0; j < layers.length; j++) {
+        var lyr = layers[j];
+        if (lyr === nl) continue;
+        try {
+          lyr.parent = nl;
+        } catch (eP) {}
+      }
     } catch (e) {
       alert("错误: " + e.toString());
     } finally {
@@ -181,6 +226,10 @@
     btnSolid.helpTip =
       "在参考图层上方创建全尺寸白色固态层，时长与其一致。需至少选中一个图层。";
 
+    var btnNull = body.add("button", undefined, "空对象（绑定父子）");
+    btnNull.helpTip =
+      "在最上层已选图层上方新建空对象（时长对齐），图层名由 AE 按语言自动递增（如「空 1」或 Null 1）；所选图层全部设为该空对象的子层。";
+
     var lab2 = body.add("statictext", undefined, "当前时间");
     lab2.justify = "left";
     try {
@@ -195,14 +244,19 @@
     btnOneFrame.helpTip =
       "在当前时间插入仅一帧的调整图层。可选中图层以决定叠放顺序。";
 
-    var hint = w.add("statictext", undefined, "说明：多选时以最上层已选图层为参考。", {
-      multiline: true,
-    });
+    var hint = w.add(
+      "statictext",
+      undefined,
+      "说明：多选时以最上层已选图层为参考；空对象按钮会将所选图层全部挂到新空对象下。",
+      {
+        multiline: true,
+      }
+    );
     hint.justify = "left";
     hint.characters = 26;
     hint.margins = [0, 14, 0, 0];
 
-    var buttons = [btnAdj, btnSolid, btnOneFrame];
+    var buttons = [btnAdj, btnSolid, btnNull, btnOneFrame];
 
     function fontSizeForButtonHeight(h) {
       var s = Math.round(12 + (h - 44) * 0.11);
@@ -255,9 +309,9 @@
           hintBlock +
           l1 +
           l2 +
-          body.spacing * 3 +
+          body.spacing * 5 +
           8;
-        btnH = Math.floor((ch - fixed) / 3);
+        btnH = Math.floor((ch - fixed) / 4);
         if (btnH < 42) btnH = 42;
         if (btnH > 88) btnH = 88;
       }
@@ -266,6 +320,7 @@
 
     btnAdj.onClick = onAddAdjustmentAbove;
     btnSolid.onClick = onAddSolidAbove;
+    btnNull.onClick = onAddNullAboveAndParent;
     btnOneFrame.onClick = onAddSingleFrameAdjAtCTI;
 
     w.onResizing = w.onResize = function () {
@@ -279,8 +334,8 @@
     syncLayout();
 
     if (!isPanel) {
-      w.preferredSize = [300, 320];
-      w.minimumSize = [260, 240];
+      w.preferredSize = [300, 360];
+      w.minimumSize = [260, 260];
     }
 
     return w;
